@@ -1,78 +1,142 @@
-from flask import Flask, render_template, request, redirect
+from flask import Flask, render_template, request, redirect, url_for, flash
 import mysql.connector
+import os
 from urllib.parse import urlparse
 import ipaddress
 
+
 app = Flask(__name__)
+app.secret_key = "phishing-url-detection-secret-key"
 
 
-# =========================================================
+# =========================
 # DATABASE CONNECTION
-# =========================================================
+# =========================
 
 def get_db_connection():
     return mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="",
-        database="phishing_detection"
+        host=os.getenv("DB_HOST", "localhost"),
+        port=int(os.getenv("DB_PORT", "3306")),
+        user=os.getenv("DB_USER", "root"),
+        password=os.getenv("DB_PASSWORD", ""),
+        database=os.getenv("DB_NAME", "phishing_detection"),
+        ssl_disabled=False
     )
 
 
-# =========================================================
+# =========================
+# CREATE TABLE
+# =========================
+
+def init_db():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS urls (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                url VARCHAR(2048) NOT NULL,
+                status VARCHAR(50) NOT NULL,
+                risk_score INT NOT NULL,
+                reasons TEXT,
+                checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+    except Exception as e:
+        print("Database initialization error:", e)
+
+
+# =========================
 # URL ANALYSIS
-# =========================================================
+# =========================
 
 def analyze_url(url):
-
-    url = url.strip()
-
-    check_url = url if "://" in url else "http://" + url
-
-    parsed = urlparse(check_url)
-    host = parsed.hostname or ""
 
     score = 0
     reasons = []
 
-    if not host or "." not in host:
+    original_url = url.strip()
+
+    # Add scheme for proper parsing
+    parse_url = original_url
+
+    if not parse_url.startswith(("http://", "https://")):
+        parse_url = "http://" + parse_url
+
+    try:
+        parsed = urlparse(parse_url)
+        hostname = parsed.hostname
+
+        if not hostname:
+            return {
+                "status": "Invalid URL",
+                "risk_score": 100,
+                "reasons": ["Invalid hostname"]
+            }
+
+    except Exception:
         return {
             "status": "Invalid URL",
-            "risk": 0,
-            "reasons": ["Please enter a valid website URL."]
+            "risk_score": 100,
+            "reasons": ["Unable to parse URL"]
         }
 
-    # URL Length
-    if len(url) > 100:
-        score += 15
-        reasons.append("Unusually long URL")
 
-    elif len(url) > 75:
+    # =========================
+    # URL LENGTH
+    # =========================
+
+    if len(original_url) > 100:
+        score += 15
+        reasons.append("Very long URL")
+
+    elif len(original_url) > 75:
         score += 10
         reasons.append("Long URL")
 
-    # HTTPS
-    if parsed.scheme.lower() != "https":
+
+    # =========================
+    # HTTPS CHECK
+    # =========================
+
+    if parsed.scheme != "https":
         score += 10
-        reasons.append("HTTPS is not used")
+        reasons.append("URL does not use HTTPS")
 
-    # IP Address
+
+    # =========================
+    # IP ADDRESS CHECK
+    # =========================
+
     try:
-        ipaddress.ip_address(host)
-
+        ipaddress.ip_address(hostname)
         score += 25
-        reasons.append("IP address used as hostname")
+        reasons.append("URL uses an IP address instead of a domain name")
 
     except ValueError:
         pass
 
-    # @ Symbol
-    if "@" in url:
-        score += 20
-        reasons.append("@ symbol found in URL")
 
-    # Suspicious Keywords
-    keywords = [
+    # =========================
+    # @ SYMBOL CHECK
+    # =========================
+
+    if "@" in original_url:
+        score += 20
+        reasons.append("URL contains @ symbol")
+
+
+    # =========================
+    # SUSPICIOUS KEYWORDS
+    # =========================
+
+    suspicious_keywords = [
         "login",
         "verify",
         "secure",
@@ -83,39 +147,51 @@ def analyze_url(url):
         "confirm"
     ]
 
-    found_keywords = [
-        word for word in keywords
-        if word in url.lower()
-    ]
+    found_keywords = []
+
+    url_lower = original_url.lower()
+
+    for keyword in suspicious_keywords:
+
+        if keyword in url_lower and keyword not in found_keywords:
+            found_keywords.append(keyword)
 
     if found_keywords:
 
-        score += min(20, len(found_keywords) * 5)
+        keyword_score = min(len(found_keywords) * 5, 20)
+
+        score += keyword_score
 
         reasons.append(
-            "Potentially suspicious keywords: "
+            "Suspicious keywords found: "
             + ", ".join(found_keywords)
         )
 
-    # Hyphens
-    if host.count("-") >= 3:
 
+    # =========================
+    # HYPHEN CHECK
+    # =========================
+
+    if hostname.count("-") >= 3:
         score += 15
+        reasons.append("Domain contains multiple hyphens")
 
-        reasons.append(
-            "Many hyphens in hostname"
-        )
 
-    # Subdomains
-    if len(host.split(".")) >= 5:
+    # =========================
+    # SUBDOMAIN CHECK
+    # =========================
 
+    hostname_parts = hostname.split(".")
+
+    if len(hostname_parts) >= 5:
         score += 15
+        reasons.append("URL contains many subdomains")
 
-        reasons.append(
-            "Many hostname components"
-        )
 
-    # URL Shorteners
+    # =========================
+    # URL SHORTENER CHECK
+    # =========================
+
     shorteners = [
         "bit.ly",
         "tinyurl.com",
@@ -125,240 +201,261 @@ def analyze_url(url):
         "rb.gy"
     ]
 
-    if host.lower() in shorteners:
-
+    if hostname.lower() in shorteners:
         score += 20
+        reasons.append("URL uses a URL shortening service")
 
-        reasons.append(
-            "URL shortening service detected"
-        )
 
-    # Risk Score
-    risk = min(score, 100)
+    # =========================
+    # LIMIT SCORE TO 100
+    # =========================
 
-    # Status
-    if risk >= 50:
+    score = min(score, 100)
+
+
+    # =========================
+    # FINAL STATUS
+    # =========================
+
+    if score >= 50:
+
         status = "Potentially Phishing"
 
-    elif risk >= 25:
+    elif score >= 25:
+
         status = "Suspicious"
 
     else:
+
         status = "Lower Risk"
 
+
     if not reasons:
-        reasons.append(
-            "No listed warning signs detected"
-        )
+        reasons.append("No major suspicious patterns detected")
+
 
     return {
         "status": status,
-        "risk": risk,
+        "risk_score": score,
         "reasons": reasons
     }
 
 
-# =========================================================
-# DASHBOARD STATISTICS
-# =========================================================
-
-def get_statistics():
-
-    connection = get_db_connection()
-    cursor = connection.cursor()
-
-    # Total
-    cursor.execute(
-        "SELECT COUNT(*) FROM urls"
-    )
-
-    total = cursor.fetchone()[0]
-
-    # Safe
-    cursor.execute(
-        "SELECT COUNT(*) FROM urls "
-        "WHERE status = 'Lower Risk'"
-    )
-
-    safe = cursor.fetchone()[0]
-
-    # Suspicious
-    cursor.execute(
-        "SELECT COUNT(*) FROM urls "
-        "WHERE status = 'Suspicious'"
-    )
-
-    suspicious = cursor.fetchone()[0]
-
-    # Phishing
-    cursor.execute(
-        "SELECT COUNT(*) FROM urls "
-        "WHERE status = 'Potentially Phishing'"
-    )
-
-    phishing = cursor.fetchone()[0]
-
-    cursor.close()
-    connection.close()
-
-    return {
-        "total": total,
-        "safe": safe,
-        "suspicious": suspicious,
-        "phishing": phishing
-    }
-
-
-# =========================================================
+# =========================
 # HOME PAGE
-# =========================================================
+# =========================
 
 @app.route("/")
-def home():
+def index():
+
+    total = 0
+    lower_risk = 0
+    suspicious = 0
+    phishing = 0
 
     try:
 
-        stats = get_statistics()
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
 
-    except mysql.connector.Error as error:
+        cursor.execute("SELECT COUNT(*) AS total FROM urls")
+        total = cursor.fetchone()["total"]
 
-        print("Database Error:", error)
+        cursor.execute("""
+            SELECT COUNT(*) AS count
+            FROM urls
+            WHERE status = 'Lower Risk'
+        """)
 
-        stats = {
-            "total": 0,
-            "safe": 0,
-            "suspicious": 0,
-            "phishing": 0
-        }
+        lower_risk = cursor.fetchone()["count"]
+
+        cursor.execute("""
+            SELECT COUNT(*) AS count
+            FROM urls
+            WHERE status = 'Suspicious'
+        """)
+
+        suspicious = cursor.fetchone()["count"]
+
+        cursor.execute("""
+            SELECT COUNT(*) AS count
+            FROM urls
+            WHERE status = 'Potentially Phishing'
+        """)
+
+        phishing = cursor.fetchone()["count"]
+
+        cursor.close()
+        conn.close()
+
+    except Exception as e:
+
+        print("Dashboard database error:", e)
+
 
     return render_template(
         "index.html",
-        stats=stats
+        total=total,
+        lower_risk=lower_risk,
+        suspicious=suspicious,
+        phishing=phishing
     )
 
 
-# =========================================================
+# =========================
 # CHECK URL
-# =========================================================
+# =========================
 
 @app.route("/check", methods=["POST"])
 def check_url():
 
-    url = request.form.get(
-        "url",
-        ""
-    ).strip()
+    url = request.form.get("url", "").strip()
 
+
+    # Empty URL check
     if not url:
 
-        return render_template(
-            "index.html",
-            error="Please enter a URL.",
-            stats=get_statistics()
-        )
+        flash("Please enter a URL.", "error")
 
-    if len(url) > 2048:
+        return redirect(url_for("index"))
 
-        return render_template(
-            "index.html",
-            error="URL is too long.",
-            stats=get_statistics()
-        )
 
-    # Analyze
+    # Analyze URL
     result = analyze_url(url)
 
-    # Save to MySQL
+
+    # Invalid URL
+    if result["status"] == "Invalid URL":
+
+        flash("Please enter a valid URL.", "error")
+
+        return redirect(url_for("index"))
+
+
+    # Convert reasons list into text
+    reasons_text = ", ".join(result["reasons"])
+
+
+    # Save result to database
     try:
 
-        connection = get_db_connection()
-        cursor = connection.cursor()
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-        reasons_text = ", ".join(
-            result["reasons"]
-        )
-
-        query = """
+        cursor.execute("""
             INSERT INTO urls
             (url, status, risk_score, reasons)
             VALUES (%s, %s, %s, %s)
-        """
-
-        values = (
+        """, (
             url,
             result["status"],
-            result["risk"],
+            result["risk_score"],
             reasons_text
-        )
+        ))
 
-        cursor.execute(
-            query,
-            values
-        )
-
-        connection.commit()
+        conn.commit()
 
         cursor.close()
-        connection.close()
+        conn.close()
 
-    except mysql.connector.Error as error:
+    except Exception as e:
 
-        print(
-            "Database Error:",
-            error
+        print("Database insert error:", e)
+
+        flash(
+            "URL analyzed, but database could not save the result.",
+            "error"
         )
 
-    stats = get_statistics()
+        return redirect(url_for("index"))
+
+
+    # Show result on home page
+    total = 0
+    lower_risk = 0
+    suspicious = 0
+    phishing = 0
+
+    try:
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("SELECT COUNT(*) AS total FROM urls")
+        total = cursor.fetchone()["total"]
+
+        cursor.execute("""
+            SELECT COUNT(*) AS count
+            FROM urls
+            WHERE status = 'Lower Risk'
+        """)
+
+        lower_risk = cursor.fetchone()["count"]
+
+        cursor.execute("""
+            SELECT COUNT(*) AS count
+            FROM urls
+            WHERE status = 'Suspicious'
+        """)
+
+        suspicious = cursor.fetchone()["count"]
+
+        cursor.execute("""
+            SELECT COUNT(*) AS count
+            FROM urls
+            WHERE status = 'Potentially Phishing'
+        """)
+
+        phishing = cursor.fetchone()["count"]
+
+        cursor.close()
+        conn.close()
+
+    except Exception as e:
+
+        print("Statistics error:", e)
+
 
     return render_template(
         "index.html",
-        checked_url=url,
         result=result,
-        stats=stats
+        checked_url=url,
+        total=total,
+        lower_risk=lower_risk,
+        suspicious=suspicious,
+        phishing=phishing
     )
 
 
-# =========================================================
-# HISTORY
-# =========================================================
+# =========================
+# HISTORY PAGE
+# =========================
 
 @app.route("/history")
 def history():
 
+    records = []
+
     try:
 
-        connection = get_db_connection()
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
 
-        cursor = connection.cursor(
-            dictionary=True
-        )
-
-        query = """
-            SELECT
-                id,
-                url,
-                status,
-                risk_score,
-                checked_at
+        cursor.execute("""
+            SELECT *
             FROM urls
             ORDER BY checked_at DESC
-        """
-
-        cursor.execute(query)
+        """)
 
         records = cursor.fetchall()
 
         cursor.close()
-        connection.close()
+        conn.close()
 
-    except mysql.connector.Error as error:
+    except Exception as e:
 
-        print(
-            "Database Error:",
-            error
-        )
+        print("History database error:", e)
 
-        records = []
 
     return render_template(
         "history.html",
@@ -366,45 +463,49 @@ def history():
     )
 
 
-# =========================================================
+# =========================
 # CLEAR HISTORY
-# =========================================================
+# =========================
 
 @app.route("/clear-history", methods=["POST"])
 def clear_history():
 
     try:
 
-        connection = get_db_connection()
-        cursor = connection.cursor()
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-        cursor.execute(
-            "DELETE FROM urls"
-        )
+        cursor.execute("DELETE FROM urls")
 
-        connection.commit()
+        conn.commit()
 
         cursor.close()
-        connection.close()
+        conn.close()
 
-        print("History cleared successfully.")
+        flash("History cleared successfully.", "success")
 
-    except mysql.connector.Error as error:
+    except Exception as e:
 
-        print(
-            "Database Error:",
-            error
+        print("Clear history error:", e)
+
+        flash(
+            "Unable to clear history.",
+            "error"
         )
 
-    return redirect("/history")
+
+    return redirect(url_for("history"))
 
 
-# =========================================================
-# RUN APPLICATION
-# =========================================================
+# =========================
+# START APPLICATION
+# =========================
 
 if __name__ == "__main__":
 
+    init_db()
+
     app.run(
-        debug=True
+        debug=True,
+        host="0.0.0.0"
     )
