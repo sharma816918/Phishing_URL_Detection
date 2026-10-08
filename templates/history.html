@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>Detection History</title>
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='style.css') }}">
+
+</head>
+
+<body>
+
+<div class="container">
+
+    <!-- HEADER -->
+
+    <div class="header">
+
+        <div>
+
+            <h1>📋 Detection History</h1>
+
+            <p>
+                Previously analyzed URLs
+            </p>
+
+        </div>
+
+        <a href="/" class="history-button">
+            🏠 Home
+        </a>
+
+    </div>
+
+
+    <!-- HISTORY TABLE -->
+
+    <div class="checker">
+
+        {% if records %}
+
+        <div class="history-top">
+
+            <h2>URL Analysis Records</h2>
+
+            <form
+                action="/clear-history"
+                method="POST"
+                onsubmit="return confirm('Are you sure you want to delete all history?');"
+            >
+
+                <button
+                    type="submit"
+                    class="delete-button"
+                >
+                    🗑️ Clear History
+                </button>
+
+            </form>
+
+        </div>
+
+
+        <div class="table-container">
+
+            <table>
+
+                <thead>
+
+                    <tr>
+
+                        <th>ID</th>
+
+                        <th>URL</th>
+
+                        <th>Status</th>
+
+                        <th>Risk</th>
+
+                        <th>Date & Time</th>
+
+                    </tr>
+
+                </thead>
+
+
+                <tbody>
+
+                    {% for record in records %}
+
+                    <tr>
+
+                        <td>
+                            {{ record.id }}
+                        </td>
+
+                        <td class="url-cell">
+                            {{ record.url }}
+                        </td>
+
+
+                        <td>
+
+                            {% if record.status == "Potentially Phishing" %}
+
+                                <span class="phishing-text">
+                                    🚨 {{ record.status }}
+                                </span>
+
+                            {% elif record.status == "Suspicious" %}
+
+                                <span class="suspicious-text">
+                                    ⚠️ {{ record.status }}
+                                </span>
+
+                            {% else %}
+
+                                <span class="safe-text">
+                                    ✅ {{ record.status }}
+                                </span>
+
+                            {% endif %}
+
+                        </td>
+
+
+                        <td>
+
+                            {% if record.risk_score >= 50 %}
+
+                                <span class="phishing-text">
+                                    {{ record.risk_score }}%
+                                </span>
+
+                            {% elif record.risk_score >= 25 %}
+
+                                <span class="suspicious-text">
+                                    {{ record.risk_score }}%
+                                </span>
+
+                            {% else %}
+
+                                <span class="safe-text">
+                                    {{ record.risk_score }}%
+                                </span>
+
+                            {% endif %}
+
+                        </td>
+
+
+                        <td>
+                            {{ record.checked_at }}
+                        </td>
+
+                    </tr>
+
+                    {% endfor %}
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+        {% else %}
+
+        <div class="result-card">
+
+            <h2>📭 No History Found</h2>
+
+            <p>
+                No URLs have been analyzed yet.
+            </p>
+
+            <a href="/" class="history-button">
+                Analyze a URL
+            </a>
+
+        </div>
+
+        {% endif %}
+
+    </div>
+
+
+    <!-- FOOTER -->
+
+    <div class="footer">
+
+        <p>
+            Phishing URL Detection System |
+            Cyber Security Project
+        </p>
+
+    </div>
+
+</div>
+
+</body>
+
+</html>

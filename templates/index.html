@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Phishing URL Detection System</title>
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+
+<div class="container">
+
+    <!-- HEADER -->
+    <div class="header">
+        <div>
+            <h1>🛡️ Phishing URL Detection</h1>
+            <p>Analyze URLs for common phishing warning signs.</p>
+        </div>
+
+        <a href="/history" class="history-button">
+            📋 View History
+        </a>
+    </div>
+
+
+    <!-- URL CHECK FORM -->
+    <div class="checker">
+
+        <h2>Check a Website URL</h2>
+
+        <form action="/check" method="POST">
+
+            <input
+                type="text"
+                name="url"
+                placeholder="Enter URL, e.g. https://example.com"
+                maxlength="2048"
+                required
+            >
+
+            <button type="submit">
+                🔍 Analyze URL
+            </button>
+
+        </form>
+
+    </div>
+
+
+    <!-- ERROR -->
+    {% if error %}
+
+    <div class="error-box">
+        ⚠️ {{ error }}
+    </div>
+
+    {% endif %}
+
+
+    <!-- STATISTICS -->
+    <div class="stats">
+
+        <div class="stat-card total">
+            <div class="stat-icon">🌐</div>
+
+            <h3>Total URLs</h3>
+
+            <div class="stat-number">
+                {{ stats.total }}
+            </div>
+        </div>
+
+
+        <div class="stat-card safe">
+            <div class="stat-icon">✅</div>
+
+            <h3>Lower Risk</h3>
+
+            <div class="stat-number">
+                {{ stats.safe }}
+            </div>
+        </div>
+
+
+        <div class="stat-card suspicious">
+            <div class="stat-icon">⚠️</div>
+
+            <h3>Suspicious</h3>
+
+            <div class="stat-number">
+                {{ stats.suspicious }}
+            </div>
+        </div>
+
+
+        <div class="stat-card phishing">
+            <div class="stat-icon">🚨</div>
+
+            <h3>Potential Phishing</h3>
+
+            <div class="stat-number">
+                {{ stats.phishing }}
+            </div>
+        </div>
+
+    </div>
+
+
+    <!-- ANALYSIS RESULT -->
+    {% if result %}
+
+    <div class="result-card">
+
+        <div class="result-header">
+            <h2>🔎 Analysis Result</h2>
+        </div>
+
+
+        <div class="url-display">
+
+            <strong>URL:</strong>
+
+            <span>
+                {{ checked_url }}
+            </span>
+
+        </div>
+
+
+        <!-- STATUS -->
+
+        {% if result.status == "Potentially Phishing" %}
+
+            <div class="status phishing-text">
+                🚨 {{ result.status }}
+            </div>
+
+        {% elif result.status == "Suspicious" %}
+
+            <div class="status suspicious-text">
+                ⚠️ {{ result.status }}
+            </div>
+
+        {% elif result.status == "Lower Risk" %}
+
+            <div class="status safe-text">
+                ✅ {{ result.status }}
+            </div>
+
+        {% else %}
+
+            <div class="status">
+                {{ result.status }}
+            </div>
+
+        {% endif %}
+
+
+        <!-- RISK SCORE -->
+
+        <div class="risk-section">
+
+            <div class="risk-title">
+
+                <strong>Risk Score</strong>
+
+                <span>
+                    {{ result.risk }} / 100
+                </span>
+
+            </div>
+
+
+            <div class="progress">
+
+                <div
+                    class="progress-bar
+                    {% if result.risk >= 50 %}
+                        danger-bar
+                    {% elif result.risk >= 25 %}
+                        warning-bar
+                    {% else %}
+                        safe-bar
+                    {% endif %}"
+
+                    style="width: {{ result.risk }}%;">
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- DETECTION DETAILS -->
+
+        <div class="details">
+
+            <h3>Detection Details</h3>
+
+            <ul>
+
+                {% for reason in result.reasons %}
+
+                    <li>
+                        {{ reason }}
+                    </li>
+
+                {% endfor %}
+
+            </ul>
+
+        </div>
+
+    </div>
+
+    {% endif %}
+
+
+    <!-- INFORMATION -->
+
+    <div class="info-box">
+
+        <h3>🔐 About this system</h3>
+
+        <p>
+            This system analyzes common URL characteristics
+            that may indicate phishing activity.
+        </p>
+
+        <p>
+            A lower risk score does not guarantee that a
+            website is completely safe.
+        </p>
+
+    </div>
+
+
+    <!-- FOOTER -->
+
+    <div class="footer">
+
+        <p>
+            Phishing URL Detection System
+            | Cyber Security Project
+        </p>
+
+    </div>
+
+</div>
+
+</body>
+</html>
