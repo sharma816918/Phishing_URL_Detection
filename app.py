@@ -3,6 +3,8 @@ import mysql.connector
 import os
 import re
 from urllib.parse import urlparse
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "phishing-url-detection-secret")
@@ -42,12 +44,11 @@ def init_db():
                 status VARCHAR(50) NOT NULL,
                 risk_score INT NOT NULL,
                 reasons TEXT,
-                checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                checked_at DATETIME NOT NULL
             )
         """)
 
         connection.commit()
-
         print("Database initialized successfully.")
 
     except Exception as e:
@@ -62,6 +63,14 @@ def init_db():
 
 
 # =========================================================
+# INDIA TIME
+# =========================================================
+
+def get_india_time():
+    return datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+
+
+# =========================================================
 # URL ANALYSIS
 # =========================================================
 
@@ -69,10 +78,6 @@ def analyze_url(url):
 
     risk = 0
     reasons = []
-
-    # -----------------------------------------------------
-    # Add scheme if missing
-    # -----------------------------------------------------
 
     original_url = url.strip()
 
@@ -83,10 +88,6 @@ def analyze_url(url):
 
     hostname = parsed_url.hostname
 
-    # -----------------------------------------------------
-    # Invalid hostname
-    # -----------------------------------------------------
-
     if not hostname:
         return {
             "status": "Invalid URL",
@@ -96,10 +97,7 @@ def analyze_url(url):
 
     hostname = hostname.lower()
 
-    # -----------------------------------------------------
-    # URL Length
-    # -----------------------------------------------------
-
+    # URL length
     if len(original_url) > 100:
         risk += 15
         reasons.append("URL is unusually long.")
@@ -108,36 +106,26 @@ def analyze_url(url):
         risk += 10
         reasons.append("URL is relatively long.")
 
-    # -----------------------------------------------------
-    # HTTPS Check
-    # -----------------------------------------------------
-
+    # HTTPS
     if parsed_url.scheme.lower() != "https":
         risk += 10
         reasons.append("URL does not use HTTPS.")
 
-    # -----------------------------------------------------
-    # IP Address Check
-    # -----------------------------------------------------
-
+    # IP address
     ip_pattern = r"^(?:\d{1,3}\.){3}\d{1,3}$"
 
     if re.match(ip_pattern, hostname):
         risk += 25
         reasons.append("URL uses an IP address instead of a domain name.")
 
-    # -----------------------------------------------------
-    # @ Symbol
-    # -----------------------------------------------------
-
+    # @ symbol
     if "@" in original_url:
         risk += 20
-        reasons.append("URL contains '@' symbol, which can hide the actual destination.")
+        reasons.append(
+            "URL contains '@' symbol, which can hide the actual destination."
+        )
 
-    # -----------------------------------------------------
-    # Suspicious Keywords
-    # -----------------------------------------------------
-
+    # Suspicious keywords
     suspicious_keywords = [
         "login",
         "verify",
@@ -150,7 +138,6 @@ def analyze_url(url):
     ]
 
     found_keywords = []
-
     url_lower = original_url.lower()
 
     for keyword in suspicious_keywords:
@@ -167,28 +154,19 @@ def analyze_url(url):
             + "."
         )
 
-    # -----------------------------------------------------
-    # Multiple Hyphens in Domain
-    # -----------------------------------------------------
-
+    # Multiple hyphens
     if hostname.count("-") >= 3:
         risk += 15
         reasons.append("Domain contains multiple hyphens.")
 
-    # -----------------------------------------------------
-    # Too Many Subdomains
-    # -----------------------------------------------------
-
+    # Too many subdomains
     hostname_parts = hostname.split(".")
 
     if len(hostname_parts) >= 5:
         risk += 15
         reasons.append("Domain contains many subdomain components.")
 
-    # -----------------------------------------------------
-    # URL Shorteners
-    # -----------------------------------------------------
-
+    # URL shorteners
     shortener_domains = [
         "bit.ly",
         "tinyurl.com",
@@ -202,16 +180,10 @@ def analyze_url(url):
         risk += 20
         reasons.append("URL uses a known URL shortening service.")
 
-    # -----------------------------------------------------
-    # Limit Risk Score
-    # -----------------------------------------------------
-
+    # Maximum risk
     risk = min(risk, 100)
 
-    # -----------------------------------------------------
-    # Determine Status
-    # -----------------------------------------------------
-
+    # Status
     if risk >= 50:
         status = "Potentially Phishing"
 
@@ -221,12 +193,10 @@ def analyze_url(url):
     else:
         status = "Lower Risk"
 
-    # -----------------------------------------------------
-    # No reasons
-    # -----------------------------------------------------
-
     if not reasons:
-        reasons.append("No major suspicious characteristics detected.")
+        reasons.append(
+            "No major suspicious characteristics detected."
+        )
 
     return {
         "status": status,
@@ -255,17 +225,16 @@ def index():
     cursor = None
 
     try:
+
         connection = get_db_connection()
         cursor = connection.cursor(dictionary=True)
 
-        # Total URLs
         cursor.execute("SELECT COUNT(*) AS total FROM urls")
         result = cursor.fetchone()
 
         if result:
             stats["total"] = result["total"]
 
-        # Lower Risk
         cursor.execute("""
             SELECT COUNT(*) AS total
             FROM urls
@@ -277,7 +246,6 @@ def index():
         if result:
             stats["safe"] = result["total"]
 
-        # Suspicious
         cursor.execute("""
             SELECT COUNT(*) AS total
             FROM urls
@@ -289,7 +257,6 @@ def index():
         if result:
             stats["suspicious"] = result["total"]
 
-        # Potentially Phishing
         cursor.execute("""
             SELECT COUNT(*) AS total
             FROM urls
@@ -301,7 +268,6 @@ def index():
         if result:
             stats["phishing"] = result["total"]
 
-        # Recent URLs
         cursor.execute("""
             SELECT *
             FROM urls
@@ -351,7 +317,6 @@ def check_url():
         flash("Please enter a URL.", "error")
         return redirect(url_for("index"))
 
-    # Analyze URL
     analysis = analyze_url(url)
 
     status = analysis["status"]
@@ -368,15 +333,19 @@ def check_url():
 
         reasons_text = "\n".join(reasons)
 
+        # Save India Standard Time
+        checked_at = get_india_time()
+
         cursor.execute("""
             INSERT INTO urls
-            (url, status, risk_score, reasons)
-            VALUES (%s, %s, %s, %s)
+            (url, status, risk_score, reasons, checked_at)
+            VALUES (%s, %s, %s, %s, %s)
         """, (
             url,
             status,
             risk_score,
-            reasons_text
+            reasons_text,
+            checked_at
         ))
 
         connection.commit()
@@ -384,7 +353,10 @@ def check_url():
     except Exception as e:
 
         print("Database insert error:", e)
-        flash("URL analyzed, but database saving failed.", "error")
+        flash(
+            "URL analyzed, but database saving failed.",
+            "error"
+        )
 
     finally:
 
@@ -394,7 +366,7 @@ def check_url():
         if connection:
             connection.close()
 
-    # Get updated dashboard statistics
+    # Updated statistics
     stats = {
         "total": 0,
         "safe": 0,
@@ -534,12 +506,19 @@ def clear_history():
 
         connection.commit()
 
-        flash("History cleared successfully.", "success")
+        flash(
+            "History cleared successfully.",
+            "success"
+        )
 
     except Exception as e:
 
         print("Clear history error:", e)
-        flash("Unable to clear history.", "error")
+
+        flash(
+            "Unable to clear history.",
+            "error"
+        )
 
     finally:
 
@@ -553,10 +532,9 @@ def clear_history():
 
 
 # =========================================================
-# INITIALIZE DATABASE
+# DATABASE INITIALIZATION
 # =========================================================
 
-# Important for Render + Gunicorn
 try:
     init_db()
 except Exception as e:
